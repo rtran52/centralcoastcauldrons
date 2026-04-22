@@ -18,27 +18,26 @@ class CatalogItem(BaseModel):
 @router.get("/catalog/", tags=["catalog"], response_model=List[CatalogItem])
 def get_catalog() -> List[CatalogItem]:
     with db.engine.begin() as connection:
-        rows = connection.execute(
-            sqlalchemy.text(
-                """
-            SELECT sku, name, inventory, price, red_ml, green_ml, blue_ml, dark_ml
-            FROM potions
-            WHERE inventory > 0
+        rows = connection.execute(sqlalchemy.text(
+            """
+            SELECT p.sku, p.name, p.price, p.red_ml, p.green_ml, p.blue_ml, p.dark_ml,
+                   COALESCE(SUM(le.potion_change), 0) AS inventory
+            FROM potions p
+            LEFT JOIN ledger_entries le ON le.potion_id = p.id
+            GROUP BY p.id, p.sku, p.name, p.price, p.red_ml, p.green_ml, p.blue_ml, p.dark_ml
+            HAVING COALESCE(SUM(le.potion_change), 0) > 0
             LIMIT 6
             """
-            )
-        ).fetchall()
+        )).fetchall()
 
     catalog = []
     for row in rows:
-        catalog.append(
-            CatalogItem(
-                sku=row.sku,
-                name=row.name,
-                quantity=row.inventory,
-                price=row.price,
-                potion_type=[row.red_ml, row.green_ml, row.blue_ml, row.dark_ml],
-            )
-        )
+        catalog.append(CatalogItem(
+            sku=row.sku,
+            name=row.name,
+            quantity=row.inventory,
+            price=row.price,
+            potion_type=[row.red_ml, row.green_ml, row.blue_ml, row.dark_ml],
+        ))
 
     return catalog
