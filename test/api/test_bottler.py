@@ -1,5 +1,4 @@
 from src.api.bottler import PotionMixes
-from typing import List
 
 
 def test_potion_mix_valid() -> None:

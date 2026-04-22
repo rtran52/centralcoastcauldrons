@@ -1,5 +1,4 @@
 from src.api.barrels import Barrel, BarrelOrder
-from typing import List
 
 
 def test_barrel_model_valid() -> None:
