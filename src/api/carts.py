@@ -5,12 +5,15 @@ from src.api import auth
 from enum import Enum
 from typing import List, Optional
 from src import database as db
+from datetime import datetime
 
 router = APIRouter(
     prefix="/carts",
     tags=["cart"],
     dependencies=[Depends(auth.get_api_key)],
 )
+
+DAYS = ["Edgeday", "Bloomday", "Arcanaday", "Hearthday", "Crownday", "Blesseday", "Soulday"]
 
 
 class SearchSortOptions(str, Enum):
@@ -73,11 +76,17 @@ def create_cart(new_cart: Customer):
     with db.engine.begin() as connection:
         result = connection.execute(sqlalchemy.text(
             """
-            INSERT INTO carts (customer_name, customer_id)
-            VALUES (:name, :cid)
+            INSERT INTO carts (customer_name, customer_id, character_class, character_species, level)
+            VALUES (:name, :cid, :cls, :species, :level)
             RETURNING id
             """
-        ), {"name": new_cart.customer_name, "cid": new_cart.customer_id})
+        ), {
+            "name": new_cart.customer_name,
+            "cid": new_cart.customer_id,
+            "cls": new_cart.character_class,
+            "species": new_cart.character_species,
+            "level": new_cart.level,
+        })
         cart_id = result.scalar_one()
 
     return CartCreateResponse(cart_id=cart_id)
@@ -93,14 +102,12 @@ def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
         cart = connection.execute(sqlalchemy.text(
             "SELECT id FROM carts WHERE id = :cart_id"
         ), {"cart_id": cart_id}).fetchone()
-
         if not cart:
             raise HTTPException(status_code=404, detail="Cart not found")
 
         potion = connection.execute(sqlalchemy.text(
             "SELECT id FROM potions WHERE sku = :sku"
         ), {"sku": item_sku}).fetchone()
-
         if not potion:
             raise HTTPException(status_code=404, detail="Potion not found")
 
@@ -125,10 +132,16 @@ class CartCheckout(BaseModel):
 @router.post("/{cart_id}/checkout", response_model=CheckoutResponse)
 def checkout(cart_id: int, cart_checkout: CartCheckout):
     with db.engine.begin() as connection:
+        # Idempotency check
+        existing = connection.execute(sqlalchemy.text(
+            "SELECT response FROM processed_orders WHERE order_id = :oid AND endpoint = 'checkout'"
+        ), {"oid": cart_id}).fetchone()
+        if existing:
+            return CheckoutResponse(**existing.response)
+
         cart = connection.execute(sqlalchemy.text(
             "SELECT id FROM carts WHERE id = :cart_id"
         ), {"cart_id": cart_id}).fetchone()
-
         if not cart:
             raise HTTPException(status_code=404, detail="Cart not found")
 
@@ -143,17 +156,44 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
 
         total_potions = 0
         total_gold = 0
+        now = datetime.utcnow()
+        hour = now.hour
+        day = DAYS[now.weekday()]
 
         for item in items:
             total_potions += item.quantity
             total_gold += item.quantity * item.price
 
-            connection.execute(sqlalchemy.text(
-                "UPDATE potions SET inventory = inventory - :qty WHERE id = :id"
-            ), {"qty": item.quantity, "id": item.potion_id})
+            txn = connection.execute(sqlalchemy.text(
+                "INSERT INTO ledger_transactions (description) VALUES (:desc) RETURNING id"
+            ), {"desc": f"Checkout cart {cart_id}: {item.quantity}x {item.sku}"}).scalar_one()
 
+            connection.execute(sqlalchemy.text(
+                """
+                INSERT INTO ledger_entries
+                (transaction_id, gold_change, potion_id, potion_change)
+                VALUES (:txn, :gold, :pid, :pchange)
+                """
+            ), {
+                "txn": txn,
+                "gold": item.quantity * item.price,
+                "pid": item.potion_id,
+                "pchange": -item.quantity,
+            })
+
+            connection.execute(sqlalchemy.text(
+                """
+                UPDATE cart_items SET
+                    sold_at = :now,
+                    day_of_week = :day,
+                    hour = :hour
+                WHERE cart_id = :cart_id AND potion_id = :potion_id
+                """
+            ), {"now": now, "day": day, "hour": hour, "cart_id": cart_id, "potion_id": item.potion_id})
+
+        response = {"total_potions_bought": total_potions, "total_gold_paid": total_gold}
         connection.execute(sqlalchemy.text(
-            "UPDATE global_inventory SET gold = gold + :gold"
-        ), {"gold": total_gold})
+            "INSERT INTO processed_orders (order_id, endpoint, response) VALUES (:oid, 'checkout', :resp)"
+        ), {"oid": cart_id, "resp": response})
 
     return CheckoutResponse(total_potions_bought=total_potions, total_gold_paid=total_gold)

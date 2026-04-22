@@ -24,46 +24,71 @@ class PotionMixes(BaseModel):
         return potion_type
 
 
+def get_current_inventory(connection):
+    return connection.execute(sqlalchemy.text(
+        """
+        SELECT
+            COALESCE(SUM(red_ml_change), 0) AS red_ml,
+            COALESCE(SUM(green_ml_change), 0) AS green_ml,
+            COALESCE(SUM(blue_ml_change), 0) AS blue_ml,
+            COALESCE(SUM(dark_ml_change), 0) AS dark_ml
+        FROM ledger_entries
+        """
+    )).one()
+
+
 @router.post("/deliver/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
 def post_deliver_bottles(potions_delivered: List[PotionMixes], order_id: int):
     print(f"potions delivered: {potions_delivered} order_id: {order_id}")
 
     with db.engine.begin() as connection:
+        # Idempotency check
+        existing = connection.execute(sqlalchemy.text(
+            "SELECT order_id FROM processed_orders WHERE order_id = :oid AND endpoint = 'bottler_deliver'"
+        ), {"oid": order_id}).fetchone()
+        if existing:
+            return
+
+        connection.execute(sqlalchemy.text(
+            "INSERT INTO processed_orders (order_id, endpoint) VALUES (:oid, 'bottler_deliver')"
+        ), {"oid": order_id})
+
         for potion in potions_delivered:
             r, g, b, d = potion.potion_type
             qty = potion.quantity
 
-            # Add potion inventory
-            connection.execute(sqlalchemy.text(
-                """
-                UPDATE potions
-                SET inventory = inventory + :qty
-                WHERE red_ml = :r AND green_ml = :g AND blue_ml = :b AND dark_ml = :d
-                """
-            ), {"qty": qty, "r": r, "g": g, "b": b, "d": d})
+            potion_row = connection.execute(sqlalchemy.text(
+                "SELECT id FROM potions WHERE red_ml = :r AND green_ml = :g AND blue_ml = :b AND dark_ml = :d"
+            ), {"r": r, "g": g, "b": b, "d": d}).fetchone()
 
-            # Subtract ml used
+            if not potion_row:
+                continue
+
+            txn = connection.execute(sqlalchemy.text(
+                "INSERT INTO ledger_transactions (description) VALUES (:desc) RETURNING id"
+            ), {"desc": f"Bottling order {order_id}: {qty}x [{r},{g},{b},{d}]"}).scalar_one()
+
             connection.execute(sqlalchemy.text(
                 """
-                UPDATE global_inventory SET
-                red_ml = red_ml - :red_used,
-                green_ml = green_ml - :green_used,
-                blue_ml = blue_ml - :blue_used
+                INSERT INTO ledger_entries
+                (transaction_id, red_ml_change, green_ml_change, blue_ml_change, dark_ml_change, potion_id, potion_change)
+                VALUES (:txn, :red, :green, :blue, :dark, :pid, :pchange)
                 """
             ), {
-                "red_used": r * qty,
-                "green_used": g * qty,
-                "blue_used": b * qty,
+                "txn": txn,
+                "red": -(r * qty),
+                "green": -(g * qty),
+                "blue": -(b * qty),
+                "dark": -(d * qty),
+                "pid": potion_row.id,
+                "pchange": qty,
             })
 
 
 @router.post("/plan", response_model=List[PotionMixes])
 def get_bottle_plan():
     with db.engine.begin() as connection:
-        inv = connection.execute(sqlalchemy.text(
-            "SELECT red_ml, green_ml, blue_ml, dark_ml FROM global_inventory"
-        )).one()
-
+        inv = get_current_inventory(connection)
         potions = connection.execute(sqlalchemy.text(
             "SELECT red_ml, green_ml, blue_ml, dark_ml FROM potions"
         )).fetchall()
@@ -78,11 +103,9 @@ def get_bottle_plan():
     plan = []
     for potion in potions:
         r, g, b, d = potion.red_ml, potion.green_ml, potion.blue_ml, potion.dark_ml
-
         if r + g + b + d == 0:
             continue
 
-        # How many can we brew given available ml?
         max_qty = float("inf")
         if r > 0:
             max_qty = min(max_qty, available["red"] // r)
@@ -96,7 +119,6 @@ def get_bottle_plan():
         max_qty = int(max_qty)
         if max_qty > 0:
             plan.append(PotionMixes(potion_type=[r, g, b, d], quantity=max_qty))
-            # Deduct from available so we don't double-allocate
             available["red"] -= r * max_qty
             available["green"] -= g * max_qty
             available["blue"] -= b * max_qty
