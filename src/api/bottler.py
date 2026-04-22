@@ -30,41 +30,76 @@ def post_deliver_bottles(potions_delivered: List[PotionMixes], order_id: int):
 
     with db.engine.begin() as connection:
         for potion in potions_delivered:
-            qty = potion.quantity
             r, g, b, d = potion.potion_type
+            qty = potion.quantity
 
-            red_ml_used = r * qty
-            green_ml_used = g * qty
-            blue_ml_used = b * qty
+            # Add potion inventory
+            connection.execute(sqlalchemy.text(
+                """
+                UPDATE potions
+                SET inventory = inventory + :qty
+                WHERE red_ml = :r AND green_ml = :g AND blue_ml = :b AND dark_ml = :d
+                """
+            ), {"qty": qty, "r": r, "g": g, "b": b, "d": d})
 
-            if r == 100:
-                connection.execute(sqlalchemy.text(
-                    "UPDATE global_inventory SET red_ml = red_ml - :ml, red_potions = red_potions + :qty"
-                ), {"ml": red_ml_used, "qty": qty})
-            elif g == 100:
-                connection.execute(sqlalchemy.text(
-                    "UPDATE global_inventory SET green_ml = green_ml - :ml, green_potions = green_potions + :qty"
-                ), {"ml": green_ml_used, "qty": qty})
-            elif b == 100:
-                connection.execute(sqlalchemy.text(
-                    "UPDATE global_inventory SET blue_ml = blue_ml - :ml, blue_potions = blue_potions + :qty"
-                ), {"ml": blue_ml_used, "qty": qty})
+            # Subtract ml used
+            connection.execute(sqlalchemy.text(
+                """
+                UPDATE global_inventory SET
+                red_ml = red_ml - :red_used,
+                green_ml = green_ml - :green_used,
+                blue_ml = blue_ml - :blue_used
+                """
+            ), {
+                "red_used": r * qty,
+                "green_used": g * qty,
+                "blue_used": b * qty,
+            })
 
 
 @router.post("/plan", response_model=List[PotionMixes])
 def get_bottle_plan():
     with db.engine.begin() as connection:
-        row = connection.execute(sqlalchemy.text(
-            "SELECT red_ml, green_ml, blue_ml FROM global_inventory"
+        inv = connection.execute(sqlalchemy.text(
+            "SELECT red_ml, green_ml, blue_ml, dark_ml FROM global_inventory"
         )).one()
 
-    plan = []
+        potions = connection.execute(sqlalchemy.text(
+            "SELECT red_ml, green_ml, blue_ml, dark_ml FROM potions"
+        )).fetchall()
 
-    if row.red_ml >= 100:
-        plan.append(PotionMixes(potion_type=[100, 0, 0, 0], quantity=row.red_ml // 100))
-    if row.green_ml >= 100:
-        plan.append(PotionMixes(potion_type=[0, 100, 0, 0], quantity=row.green_ml // 100))
-    if row.blue_ml >= 100:
-        plan.append(PotionMixes(potion_type=[0, 0, 100, 0], quantity=row.blue_ml // 100))
+    available = {
+        "red": inv.red_ml,
+        "green": inv.green_ml,
+        "blue": inv.blue_ml,
+        "dark": inv.dark_ml,
+    }
+
+    plan = []
+    for potion in potions:
+        r, g, b, d = potion.red_ml, potion.green_ml, potion.blue_ml, potion.dark_ml
+
+        if r + g + b + d == 0:
+            continue
+
+        # How many can we brew given available ml?
+        max_qty = float("inf")
+        if r > 0:
+            max_qty = min(max_qty, available["red"] // r)
+        if g > 0:
+            max_qty = min(max_qty, available["green"] // g)
+        if b > 0:
+            max_qty = min(max_qty, available["blue"] // b)
+        if d > 0:
+            max_qty = min(max_qty, available["dark"] // d)
+
+        max_qty = int(max_qty)
+        if max_qty > 0:
+            plan.append(PotionMixes(potion_type=[r, g, b, d], quantity=max_qty))
+            # Deduct from available so we don't double-allocate
+            available["red"] -= r * max_qty
+            available["green"] -= g * max_qty
+            available["blue"] -= b * max_qty
+            available["dark"] -= d * max_qty
 
     return plan

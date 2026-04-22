@@ -18,35 +18,23 @@ class CatalogItem(BaseModel):
 @router.get("/catalog/", tags=["catalog"], response_model=List[CatalogItem])
 def get_catalog() -> List[CatalogItem]:
     with db.engine.begin() as connection:
-        row = connection.execute(sqlalchemy.text(
-            "SELECT red_potions, green_potions, blue_potions FROM global_inventory"
-        )).one()
+        rows = connection.execute(sqlalchemy.text(
+            """
+            SELECT sku, name, inventory, price, red_ml, green_ml, blue_ml, dark_ml
+            FROM potions
+            WHERE inventory > 0
+            LIMIT 6
+            """
+        )).fetchall()
 
     catalog = []
-
-    if row.red_potions > 0:
+    for row in rows:
         catalog.append(CatalogItem(
-            sku="RED_POTION_0",
-            name="Red Potion",
-            quantity=row.red_potions,
-            price=50,
-            potion_type=[100, 0, 0, 0],
-        ))
-    if row.green_potions > 0:
-        catalog.append(CatalogItem(
-            sku="GREEN_POTION_0",
-            name="Green Potion",
-            quantity=row.green_potions,
-            price=50,
-            potion_type=[0, 100, 0, 0],
-        ))
-    if row.blue_potions > 0:
-        catalog.append(CatalogItem(
-            sku="BLUE_POTION_0",
-            name="Blue Potion",
-            quantity=row.blue_potions,
-            price=50,
-            potion_type=[0, 0, 100, 0],
+            sku=row.sku,
+            name=row.name,
+            quantity=row.inventory,
+            price=row.price,
+            potion_type=[row.red_ml, row.green_ml, row.blue_ml, row.dark_ml],
         ))
 
     return catalog

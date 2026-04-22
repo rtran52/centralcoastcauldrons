@@ -62,36 +62,24 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
 
     with db.engine.begin() as connection:
         row = connection.execute(sqlalchemy.text(
-            "SELECT gold, red_potions, green_potions, blue_potions FROM global_inventory"
+            "SELECT gold, red_ml, green_ml, blue_ml FROM global_inventory"
         )).one()
 
     gold = row.gold
-    red_potions = row.red_potions
-    green_potions = row.green_potions
-    blue_potions = row.blue_potions
-
-    potion_counts = {"red": red_potions, "green": green_potions, "blue": blue_potions}
-    colors = ["red", "green", "blue"]
+    colors = [
+        ("red", 0, row.red_ml),
+        ("green", 1, row.green_ml),
+        ("blue", 2, row.blue_ml),
+    ]
     random.shuffle(colors)
 
-    for color in colors:
-        if potion_counts[color] < 5:
-            if color == "red":
-                barrel = min(
-                    (b for b in wholesale_catalog if b.potion_type[0] == 1),
-                    key=lambda b: b.price, default=None
-                )
-            elif color == "green":
-                barrel = min(
-                    (b for b in wholesale_catalog if b.potion_type[1] == 1),
-                    key=lambda b: b.price, default=None
-                )
-            else:
-                barrel = min(
-                    (b for b in wholesale_catalog if b.potion_type[2] == 1),
-                    key=lambda b: b.price, default=None
-                )
-
+    for color_name, idx, current_ml in colors:
+        if current_ml < 500:
+            barrel = min(
+                (b for b in wholesale_catalog if b.potion_type[idx] == 1),
+                key=lambda b: b.price,
+                default=None,
+            )
             if barrel and barrel.price <= gold:
                 return [BarrelOrder(sku=barrel.sku, quantity=1)]
 
