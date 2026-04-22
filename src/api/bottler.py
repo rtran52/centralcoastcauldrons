@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, Field, field_validator
 from typing import List
 from src.api import auth
+import sqlalchemy
+from src import database as db
 
 router = APIRouter(
     prefix="/bottler",
@@ -11,15 +13,8 @@ router = APIRouter(
 
 
 class PotionMixes(BaseModel):
-    potion_type: List[int] = Field(
-        ...,
-        min_length=4,
-        max_length=4,
-        description="Must contain exactly 4 elements: [r, g, b, d]",
-    )
-    quantity: int = Field(
-        ..., ge=1, le=10000, description="Quantity must be between 1 and 10,000"
-    )
+    potion_type: List[int] = Field(..., min_length=4, max_length=4)
+    quantity: int = Field(..., ge=1, le=10000)
 
     @field_validator("potion_type")
     @classmethod
@@ -31,52 +26,45 @@ class PotionMixes(BaseModel):
 
 @router.post("/deliver/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
 def post_deliver_bottles(potions_delivered: List[PotionMixes], order_id: int):
-    """
-    Delivery of potions requested after plan. order_id is a unique value representing
-    a single delivery; the call is idempotent based on the order_id.
-    """
     print(f"potions delivered: {potions_delivered} order_id: {order_id}")
 
-    # TODO: Record values of delivered potions in your database.
-    # TODO: Subtract ml based on how much delivered potions used.
-    pass
+    with db.engine.begin() as connection:
+        for potion in potions_delivered:
+            qty = potion.quantity
+            r, g, b, d = potion.potion_type
 
+            red_ml_used = r * qty
+            green_ml_used = g * qty
+            blue_ml_used = b * qty
 
-def create_bottle_plan(
-    red_ml: int,
-    green_ml: int,
-    blue_ml: int,
-    dark_ml: int,
-    maximum_potion_capacity: int,
-    current_potion_inventory: List[PotionMixes],
-) -> List[PotionMixes]:
-    # TODO: Create a real bottle plan logic
-    return [
-        PotionMixes(
-            potion_type=[100, 0, 0, 0],
-            quantity=5,
-        )
-    ]
+            if r == 100:
+                connection.execute(sqlalchemy.text(
+                    "UPDATE global_inventory SET red_ml = red_ml - :ml, red_potions = red_potions + :qty"
+                ), {"ml": red_ml_used, "qty": qty})
+            elif g == 100:
+                connection.execute(sqlalchemy.text(
+                    "UPDATE global_inventory SET green_ml = green_ml - :ml, green_potions = green_potions + :qty"
+                ), {"ml": green_ml_used, "qty": qty})
+            elif b == 100:
+                connection.execute(sqlalchemy.text(
+                    "UPDATE global_inventory SET blue_ml = blue_ml - :ml, blue_potions = blue_potions + :qty"
+                ), {"ml": blue_ml_used, "qty": qty})
 
 
 @router.post("/plan", response_model=List[PotionMixes])
 def get_bottle_plan():
-    """
-    Gets the plan for bottling potions.
-    Each bottle has a quantity of what proportion of red, green, blue, and dark potions to add.
-    Colors are expressed in integers from 0 to 100 that must sum up to exactly 100.
-    """
+    with db.engine.begin() as connection:
+        row = connection.execute(sqlalchemy.text(
+            "SELECT red_ml, green_ml, blue_ml FROM global_inventory"
+        )).one()
 
-    # TODO: Fill in values below based on what is in your database
-    return create_bottle_plan(
-        red_ml=100,
-        green_ml=0,
-        blue_ml=0,
-        dark_ml=0,
-        maximum_potion_capacity=50,
-        current_potion_inventory=[],
-    )
+    plan = []
 
+    if row.red_ml >= 100:
+        plan.append(PotionMixes(potion_type=[100, 0, 0, 0], quantity=row.red_ml // 100))
+    if row.green_ml >= 100:
+        plan.append(PotionMixes(potion_type=[0, 100, 0, 0], quantity=row.green_ml // 100))
+    if row.blue_ml >= 100:
+        plan.append(PotionMixes(potion_type=[0, 0, 100, 0], quantity=row.blue_ml // 100))
 
-if __name__ == "__main__":
-    print(get_bottle_plan())
+    return plan

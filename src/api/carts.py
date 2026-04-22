@@ -47,22 +47,7 @@ def search_orders(
     sort_col: SearchSortOptions = SearchSortOptions.timestamp,
     sort_order: SearchSortOrder = SearchSortOrder.desc,
 ):
-    """
-    Search for cart line items by customer name and/or potion sku.
-    """
-    return SearchResponse(
-        previous=None,
-        next=None,
-        results=[
-            LineItem(
-                line_item_id=1,
-                item_sku="1 oblivion potion",
-                customer_name="Scaramouche",
-                line_item_total=50,
-                timestamp="2021-01-01T00:00:00Z",
-            )
-        ],
-    )
+    return SearchResponse(previous=None, next=None, results=[])
 
 
 cart_id_counter = 1
@@ -79,9 +64,6 @@ class Customer(BaseModel):
 
 @router.post("/visits/{visit_id}", status_code=status.HTTP_204_NO_CONTENT)
 def post_visits(visit_id: int, customers: List[Customer]):
-    """
-    Shares the customers that visited the store on that tick.
-    """
     print(customers)
     pass
 
@@ -92,9 +74,6 @@ class CartCreateResponse(BaseModel):
 
 @router.post("/", response_model=CartCreateResponse)
 def create_cart(new_cart: Customer):
-    """
-    Creates a new cart for a specific customer.
-    """
     global cart_id_counter
     cart_id = cart_id_counter
     cart_id_counter += 1
@@ -103,19 +82,14 @@ def create_cart(new_cart: Customer):
 
 
 class CartItem(BaseModel):
-    quantity: int = Field(ge=1, description="Quantity must be at least 1")
+    quantity: int = Field(ge=1)
 
 
 @router.post("/{cart_id}/items/{item_sku}", status_code=status.HTTP_204_NO_CONTENT)
 def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
-    print(
-        f"cart_id: {cart_id}, item_sku: {item_sku}, cart_item: {cart_item}, carts: {carts}"
-    )
     if cart_id not in carts:
         raise HTTPException(status_code=404, detail="Cart not found")
-
     carts[cart_id][item_sku] = cart_item.quantity
-    return status.HTTP_204_NO_CONTENT
 
 
 class CheckoutResponse(BaseModel):
@@ -129,39 +103,30 @@ class CartCheckout(BaseModel):
 
 @router.post("/{cart_id}/checkout", response_model=CheckoutResponse)
 def checkout(cart_id: int, cart_checkout: CartCheckout):
-    """
-    Handles the checkout process for a specific cart.
-    """
-
     if cart_id not in carts:
         raise HTTPException(status_code=404, detail="Cart not found")
 
-    total_potions_bought = sum(carts[cart_id].values())
-    total_gold_paid = total_potions_bought * 50  # Assuming each potion costs 50 gold
+    total_potions_bought = 0
+    total_gold_paid = 0
 
     with db.engine.begin() as connection:
-        row = connection.execute(
-            sqlalchemy.text(
-                """
-                SELECT gold FROM global_inventory
-                """
-            )
-        ).one()
+        for sku, quantity in carts[cart_id].items():
+            total_potions_bought += quantity
+            total_gold_paid += quantity * 50
 
-        gold = row.gold
-        gold += total_gold_paid
+            if sku == "RED_POTION_0":
+                connection.execute(sqlalchemy.text(
+                    "UPDATE global_inventory SET red_potions = red_potions - :qty, gold = gold + :gold"
+                ), {"qty": quantity, "gold": quantity * 50})
+            elif sku == "GREEN_POTION_0":
+                connection.execute(sqlalchemy.text(
+                    "UPDATE global_inventory SET green_potions = green_potions - :qty, gold = gold + :gold"
+                ), {"qty": quantity, "gold": quantity * 50})
+            elif sku == "BLUE_POTION_0":
+                connection.execute(sqlalchemy.text(
+                    "UPDATE global_inventory SET blue_potions = blue_potions - :qty, gold = gold + :gold"
+                ), {"qty": quantity, "gold": quantity * 50})
 
-        connection.execute(
-            sqlalchemy.text(
-                """
-                UPDATE global_inventory SET 
-                gold = :total_gold
-                """
-            ),
-            [{"total_gold": gold}],
-        )
-    # TODO: Deduct the right potions from inventory to the shop
+    del carts[cart_id]
 
-    return CheckoutResponse(
-        total_potions_bought=total_potions_bought, total_gold_paid=total_gold_paid
-    )
+    return CheckoutResponse(total_potions_bought=total_potions_bought, total_gold_paid=total_gold_paid)
