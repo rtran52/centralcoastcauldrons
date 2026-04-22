@@ -34,8 +34,9 @@ class BarrelOrder(BaseModel):
 
 
 def get_current_inventory(connection):
-    row = connection.execute(sqlalchemy.text(
-        """
+    row = connection.execute(
+        sqlalchemy.text(
+            """
         SELECT
             COALESCE(SUM(gold_change), 0) AS gold,
             COALESCE(SUM(red_ml_change), 0) AS red_ml,
@@ -44,7 +45,8 @@ def get_current_inventory(connection):
             COALESCE(SUM(dark_ml_change), 0) AS dark_ml
         FROM ledger_entries
         """
-    )).one()
+        )
+    ).one()
     return row
 
 
@@ -54,25 +56,34 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
 
     with db.engine.begin() as connection:
         # Idempotency check
-        existing = connection.execute(sqlalchemy.text(
-            "SELECT order_id FROM processed_orders WHERE order_id = :oid AND endpoint = 'barrels_deliver'"
-        ), {"oid": order_id}).fetchone()
+        existing = connection.execute(
+            sqlalchemy.text(
+                "SELECT order_id FROM processed_orders WHERE order_id = :oid AND endpoint = 'barrels_deliver'"
+            ),
+            {"oid": order_id},
+        ).fetchone()
         if existing:
             return
 
         # Record processed
-        connection.execute(sqlalchemy.text(
-            "INSERT INTO processed_orders (order_id, endpoint) VALUES (:oid, 'barrels_deliver')"
-        ), {"oid": order_id})
+        connection.execute(
+            sqlalchemy.text(
+                "INSERT INTO processed_orders (order_id, endpoint) VALUES (:oid, 'barrels_deliver')"
+            ),
+            {"oid": order_id},
+        )
 
         for barrel in barrels_delivered:
             gold_cost = barrel.price * barrel.quantity
             ml_gained = barrel.ml_per_barrel * barrel.quantity
 
             # Create transaction
-            txn = connection.execute(sqlalchemy.text(
-                "INSERT INTO ledger_transactions (description) VALUES (:desc) RETURNING id"
-            ), {"desc": f"Barrel delivery order {order_id}: {barrel.sku}"}).scalar_one()
+            txn = connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO ledger_transactions (description) VALUES (:desc) RETURNING id"
+                ),
+                {"desc": f"Barrel delivery order {order_id}: {barrel.sku}"},
+            ).scalar_one()
 
             red_ml = green_ml = blue_ml = dark_ml = 0
             if barrel.potion_type[0] == 1:
@@ -84,20 +95,23 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
             elif barrel.potion_type[3] == 1:
                 dark_ml = ml_gained
 
-            connection.execute(sqlalchemy.text(
-                """
+            connection.execute(
+                sqlalchemy.text(
+                    """
                 INSERT INTO ledger_entries
                 (transaction_id, gold_change, red_ml_change, green_ml_change, blue_ml_change, dark_ml_change)
                 VALUES (:txn, :gold, :red, :green, :blue, :dark)
                 """
-            ), {
-                "txn": txn,
-                "gold": -gold_cost,
-                "red": red_ml,
-                "green": green_ml,
-                "blue": blue_ml,
-                "dark": dark_ml,
-            })
+                ),
+                {
+                    "txn": txn,
+                    "gold": -gold_cost,
+                    "red": red_ml,
+                    "green": green_ml,
+                    "blue": blue_ml,
+                    "dark": dark_ml,
+                },
+            )
 
 
 @router.post("/plan", response_model=List[BarrelOrder])

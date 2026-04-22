@@ -25,21 +25,25 @@ class CapacityPlan(BaseModel):
 @router.get("/audit", response_model=InventoryAudit)
 def get_inventory():
     with db.engine.begin() as connection:
-        inv = connection.execute(sqlalchemy.text(
-            """
+        inv = connection.execute(
+            sqlalchemy.text(
+                """
             SELECT
                 COALESCE(SUM(gold_change), 0) AS gold,
                 COALESCE(SUM(red_ml_change) + SUM(green_ml_change) + SUM(blue_ml_change) + SUM(dark_ml_change), 0) AS ml_in_barrels
             FROM ledger_entries
             """
-        )).one()
+            )
+        ).one()
 
-        potions = connection.execute(sqlalchemy.text(
-            """
+        potions = connection.execute(
+            sqlalchemy.text(
+                """
             SELECT COALESCE(SUM(potion_change), 0) AS total_potions
             FROM ledger_entries
             """
-        )).one()
+            )
+        ).one()
 
     return InventoryAudit(
         number_of_potions=potions.total_potions,

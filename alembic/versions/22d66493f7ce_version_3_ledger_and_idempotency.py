@@ -29,13 +29,20 @@ def upgrade():
     op.create_table(
         "ledger_entries",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("transaction_id", sa.Integer(), sa.ForeignKey("ledger_transactions.id"), nullable=False),
+        sa.Column(
+            "transaction_id",
+            sa.Integer(),
+            sa.ForeignKey("ledger_transactions.id"),
+            nullable=False,
+        ),
         sa.Column("gold_change", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("red_ml_change", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("green_ml_change", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("blue_ml_change", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("dark_ml_change", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("potion_id", sa.Integer(), sa.ForeignKey("potions.id"), nullable=True),
+        sa.Column(
+            "potion_id", sa.Integer(), sa.ForeignKey("potions.id"), nullable=True
+        ),
         sa.Column("potion_change", sa.Integer(), nullable=False, server_default="0"),
     )
 
@@ -52,19 +59,26 @@ def upgrade():
     op.add_column("carts", sa.Column("character_class", sa.String(), nullable=True))
     op.add_column("carts", sa.Column("character_species", sa.String(), nullable=True))
     op.add_column("carts", sa.Column("level", sa.Integer(), nullable=True))
-    op.add_column("cart_items", sa.Column("sold_at", sa.DateTime(), server_default=sa.text("now()")))
+    op.add_column(
+        "cart_items",
+        sa.Column("sold_at", sa.DateTime(), server_default=sa.text("now()")),
+    )
     op.add_column("cart_items", sa.Column("day_of_week", sa.String(), nullable=True))
     op.add_column("cart_items", sa.Column("hour", sa.Integer(), nullable=True))
 
     # Seed initial gold ledger entry (starting 100 gold)
-    op.execute(sa.text("""
+    op.execute(
+        sa.text("""
         INSERT INTO ledger_transactions (description) VALUES ('Initial gold') RETURNING id
-    """))
-    op.execute(sa.text("""
+    """)
+    )
+    op.execute(
+        sa.text("""
         INSERT INTO ledger_entries (transaction_id, gold_change)
         SELECT id, 100 FROM ledger_transactions WHERE description = 'Initial gold'
         ORDER BY id DESC LIMIT 1
-    """))
+    """)
+    )
 
 
 def downgrade():

@@ -32,13 +32,15 @@ def upgrade():
     )
 
     # Seed starting potions
-    op.execute(sa.text("""
+    op.execute(
+        sa.text("""
         INSERT INTO potions (sku, name, red_ml, green_ml, blue_ml, dark_ml, price) VALUES
         ('RED_POTION_0', 'Red Potion', 100, 0, 0, 0, 50),
         ('GREEN_POTION_0', 'Green Potion', 0, 100, 0, 0, 50),
         ('BLUE_POTION_0', 'Blue Potion', 0, 0, 100, 0, 50),
         ('PURPLE_POTION_0', 'Purple Potion', 50, 0, 50, 0, 60)
-    """))
+    """)
+    )
 
     # Create carts table
     op.create_table(
@@ -54,7 +56,9 @@ def upgrade():
         "cart_items",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("cart_id", sa.Integer(), sa.ForeignKey("carts.id"), nullable=False),
-        sa.Column("potion_id", sa.Integer(), sa.ForeignKey("potions.id"), nullable=False),
+        sa.Column(
+            "potion_id", sa.Integer(), sa.ForeignKey("potions.id"), nullable=False
+        ),
         sa.Column("quantity", sa.Integer(), nullable=False),
     )
 

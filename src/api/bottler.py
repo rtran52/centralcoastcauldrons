@@ -25,8 +25,9 @@ class PotionMixes(BaseModel):
 
 
 def get_current_inventory(connection):
-    return connection.execute(sqlalchemy.text(
-        """
+    return connection.execute(
+        sqlalchemy.text(
+            """
         SELECT
             COALESCE(SUM(red_ml_change), 0) AS red_ml,
             COALESCE(SUM(green_ml_change), 0) AS green_ml,
@@ -34,7 +35,8 @@ def get_current_inventory(connection):
             COALESCE(SUM(dark_ml_change), 0) AS dark_ml
         FROM ledger_entries
         """
-    )).one()
+        )
+    ).one()
 
 
 @router.post("/deliver/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -43,55 +45,70 @@ def post_deliver_bottles(potions_delivered: List[PotionMixes], order_id: int):
 
     with db.engine.begin() as connection:
         # Idempotency check
-        existing = connection.execute(sqlalchemy.text(
-            "SELECT order_id FROM processed_orders WHERE order_id = :oid AND endpoint = 'bottler_deliver'"
-        ), {"oid": order_id}).fetchone()
+        existing = connection.execute(
+            sqlalchemy.text(
+                "SELECT order_id FROM processed_orders WHERE order_id = :oid AND endpoint = 'bottler_deliver'"
+            ),
+            {"oid": order_id},
+        ).fetchone()
         if existing:
             return
 
-        connection.execute(sqlalchemy.text(
-            "INSERT INTO processed_orders (order_id, endpoint) VALUES (:oid, 'bottler_deliver')"
-        ), {"oid": order_id})
+        connection.execute(
+            sqlalchemy.text(
+                "INSERT INTO processed_orders (order_id, endpoint) VALUES (:oid, 'bottler_deliver')"
+            ),
+            {"oid": order_id},
+        )
 
         for potion in potions_delivered:
             r, g, b, d = potion.potion_type
             qty = potion.quantity
 
-            potion_row = connection.execute(sqlalchemy.text(
-                "SELECT id FROM potions WHERE red_ml = :r AND green_ml = :g AND blue_ml = :b AND dark_ml = :d"
-            ), {"r": r, "g": g, "b": b, "d": d}).fetchone()
+            potion_row = connection.execute(
+                sqlalchemy.text(
+                    "SELECT id FROM potions WHERE red_ml = :r AND green_ml = :g AND blue_ml = :b AND dark_ml = :d"
+                ),
+                {"r": r, "g": g, "b": b, "d": d},
+            ).fetchone()
 
             if not potion_row:
                 continue
 
-            txn = connection.execute(sqlalchemy.text(
-                "INSERT INTO ledger_transactions (description) VALUES (:desc) RETURNING id"
-            ), {"desc": f"Bottling order {order_id}: {qty}x [{r},{g},{b},{d}]"}).scalar_one()
+            txn = connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO ledger_transactions (description) VALUES (:desc) RETURNING id"
+                ),
+                {"desc": f"Bottling order {order_id}: {qty}x [{r},{g},{b},{d}]"},
+            ).scalar_one()
 
-            connection.execute(sqlalchemy.text(
-                """
+            connection.execute(
+                sqlalchemy.text(
+                    """
                 INSERT INTO ledger_entries
                 (transaction_id, red_ml_change, green_ml_change, blue_ml_change, dark_ml_change, potion_id, potion_change)
                 VALUES (:txn, :red, :green, :blue, :dark, :pid, :pchange)
                 """
-            ), {
-                "txn": txn,
-                "red": -(r * qty),
-                "green": -(g * qty),
-                "blue": -(b * qty),
-                "dark": -(d * qty),
-                "pid": potion_row.id,
-                "pchange": qty,
-            })
+                ),
+                {
+                    "txn": txn,
+                    "red": -(r * qty),
+                    "green": -(g * qty),
+                    "blue": -(b * qty),
+                    "dark": -(d * qty),
+                    "pid": potion_row.id,
+                    "pchange": qty,
+                },
+            )
 
 
 @router.post("/plan", response_model=List[PotionMixes])
 def get_bottle_plan():
     with db.engine.begin() as connection:
         inv = get_current_inventory(connection)
-        potions = connection.execute(sqlalchemy.text(
-            "SELECT red_ml, green_ml, blue_ml, dark_ml FROM potions"
-        )).fetchall()
+        potions = connection.execute(
+            sqlalchemy.text("SELECT red_ml, green_ml, blue_ml, dark_ml FROM potions")
+        ).fetchall()
 
     available = {
         "red": inv.red_ml,
