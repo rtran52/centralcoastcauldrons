@@ -50,7 +50,6 @@ def get_current_inventory(connection):
 
 
 def best_barrel_for_color(catalog: List[Barrel], color_idx: int, gold: int):
-    """Pick the best barrel for a color — biggest ml per gold we can afford."""
     candidates = [
         b
         for b in catalog
@@ -58,7 +57,6 @@ def best_barrel_for_color(catalog: List[Barrel], color_idx: int, gold: int):
     ]
     if not candidates:
         return None
-    # Best value = most ml per gold
     return max(candidates, key=lambda b: b.ml_per_barrel / b.price)
 
 
@@ -132,7 +130,7 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
 
     gold = inv.gold
     orders = []
-    ML_TARGET = 1000  # try to keep at least 1000ml of each color
+    ML_TARGET = 500  # lowered from 1000 so we restock sooner
 
     colors = [
         ("red", 0, inv.red_ml),
@@ -140,8 +138,9 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
         ("blue", 2, inv.blue_ml),
     ]
 
-    # Randomize so we don't always prioritize same color
-    random.shuffle(colors)
+    # Always try all 3 colors so we can brew purple (needs red + blue)
+    # Sort by ml ascending so most depleted color gets bought first
+    colors.sort(key=lambda c: c[2])
 
     for color_name, idx, current_ml in colors:
         if current_ml >= ML_TARGET:
@@ -151,9 +150,8 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
         if not barrel:
             continue
 
-        # Buy as many as we can afford (up to available quantity)
         max_afford = gold // barrel.price
-        qty = min(max_afford, barrel.quantity)
+        qty = min(max_afford, barrel.quantity, 3)  # cap at 3 per color
 
         if qty > 0:
             orders.append(BarrelOrder(sku=barrel.sku, quantity=qty))
