@@ -49,6 +49,19 @@ def get_current_inventory(connection):
     ).one()
 
 
+def best_barrel_for_color(catalog: List[Barrel], color_idx: int, gold: int):
+    """Pick the best barrel for a color — biggest ml per gold we can afford."""
+    candidates = [
+        b
+        for b in catalog
+        if b.potion_type[color_idx] == 1 and b.price <= gold and b.quantity > 0
+    ]
+    if not candidates:
+        return None
+    # Best value = most ml per gold
+    return max(candidates, key=lambda b: b.ml_per_barrel / b.price)
+
+
 @router.post("/deliver/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
 def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
     print(f"barrels delivered: {barrels_delivered} order_id: {order_id}")
@@ -118,21 +131,35 @@ def get_wholesale_purchase_plan(wholesale_catalog: List[Barrel]):
         inv = get_current_inventory(connection)
 
     gold = inv.gold
+    orders = []
+    ML_TARGET = 1000  # try to keep at least 1000ml of each color
+
     colors = [
         ("red", 0, inv.red_ml),
         ("green", 1, inv.green_ml),
         ("blue", 2, inv.blue_ml),
     ]
+
+    # Randomize so we don't always prioritize same color
     random.shuffle(colors)
 
     for color_name, idx, current_ml in colors:
-        if current_ml < 500:
-            barrel = min(
-                (b for b in wholesale_catalog if b.potion_type[idx] == 1),
-                key=lambda b: b.price,
-                default=None,
-            )
-            if barrel and barrel.price <= gold:
-                return [BarrelOrder(sku=barrel.sku, quantity=1)]
+        if current_ml >= ML_TARGET:
+            continue
 
-    return []
+        barrel = best_barrel_for_color(wholesale_catalog, idx, gold)
+        if not barrel:
+            continue
+
+        # Buy as many as we can afford (up to available quantity)
+        max_afford = gold // barrel.price
+        qty = min(max_afford, barrel.quantity)
+
+        if qty > 0:
+            orders.append(BarrelOrder(sku=barrel.sku, quantity=qty))
+            gold -= barrel.price * qty
+
+        if gold <= 0:
+            break
+
+    return orders
