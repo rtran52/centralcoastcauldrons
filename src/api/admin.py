@@ -25,7 +25,6 @@ def reset():
             )
         )
 
-        # Re-seed starting gold in ledger
         txn = connection.execute(
             sqlalchemy.text(
                 "INSERT INTO ledger_transactions (description) VALUES ('Reset: initial gold') RETURNING id"

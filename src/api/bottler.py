@@ -44,10 +44,9 @@ def post_deliver_bottles(potions_delivered: List[PotionMixes], order_id: int):
     print(f"potions delivered: {potions_delivered} order_id: {order_id}")
 
     with db.engine.begin() as connection:
-        # Idempotency check
         existing = connection.execute(
             sqlalchemy.text(
-                "SELECT order_id FROM processed_orders WHERE order_id = :oid AND endpoint = 'bottler_deliver'"
+                "SELECT id FROM processed_orders WHERE order_id = :oid AND endpoint = 'bottler_deliver'"
             ),
             {"oid": order_id},
         ).fetchone()

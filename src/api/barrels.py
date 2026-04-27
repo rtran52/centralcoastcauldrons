@@ -34,7 +34,7 @@ class BarrelOrder(BaseModel):
 
 
 def get_current_inventory(connection):
-    row = connection.execute(
+    return connection.execute(
         sqlalchemy.text(
             """
         SELECT
@@ -47,7 +47,6 @@ def get_current_inventory(connection):
         """
         )
     ).one()
-    return row
 
 
 @router.post("/deliver/{order_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -55,17 +54,15 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
     print(f"barrels delivered: {barrels_delivered} order_id: {order_id}")
 
     with db.engine.begin() as connection:
-        # Idempotency check
         existing = connection.execute(
             sqlalchemy.text(
-                "SELECT order_id FROM processed_orders WHERE order_id = :oid AND endpoint = 'barrels_deliver'"
+                "SELECT id FROM processed_orders WHERE order_id = :oid AND endpoint = 'barrels_deliver'"
             ),
             {"oid": order_id},
         ).fetchone()
         if existing:
             return
 
-        # Record processed
         connection.execute(
             sqlalchemy.text(
                 "INSERT INTO processed_orders (order_id, endpoint) VALUES (:oid, 'barrels_deliver')"
@@ -77,7 +74,6 @@ def post_deliver_barrels(barrels_delivered: List[Barrel], order_id: int):
             gold_cost = barrel.price * barrel.quantity
             ml_gained = barrel.ml_per_barrel * barrel.quantity
 
-            # Create transaction
             txn = connection.execute(
                 sqlalchemy.text(
                     "INSERT INTO ledger_transactions (description) VALUES (:desc) RETURNING id"

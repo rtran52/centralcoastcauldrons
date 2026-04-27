@@ -124,20 +124,36 @@ def set_item_quantity(cart_id: int, item_sku: str, cart_item: CartItem):
         if not potion:
             raise HTTPException(status_code=404, detail="Potion not found")
 
-        connection.execute(
+        # Check if item already exists, update quantity if so
+        existing = connection.execute(
             sqlalchemy.text(
-                """
-            INSERT INTO cart_items (cart_id, potion_id, quantity)
-            VALUES (:cart_id, :potion_id, :quantity)
-            ON CONFLICT DO NOTHING
-            """
+                "SELECT id FROM cart_items WHERE cart_id = :cart_id AND potion_id = :potion_id"
             ),
-            {
-                "cart_id": cart_id,
-                "potion_id": potion.id,
-                "quantity": cart_item.quantity,
-            },
-        )
+            {"cart_id": cart_id, "potion_id": potion.id},
+        ).fetchone()
+
+        if existing:
+            connection.execute(
+                sqlalchemy.text(
+                    "UPDATE cart_items SET quantity = :quantity WHERE cart_id = :cart_id AND potion_id = :potion_id"
+                ),
+                {
+                    "quantity": cart_item.quantity,
+                    "cart_id": cart_id,
+                    "potion_id": potion.id,
+                },
+            )
+        else:
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO cart_items (cart_id, potion_id, quantity) VALUES (:cart_id, :potion_id, :quantity)"
+                ),
+                {
+                    "cart_id": cart_id,
+                    "potion_id": potion.id,
+                    "quantity": cart_item.quantity,
+                },
+            )
 
 
 class CheckoutResponse(BaseModel):
@@ -180,6 +196,9 @@ def checkout(cart_id: int, cart_checkout: CartCheckout):
             ),
             {"cart_id": cart_id},
         ).fetchall()
+
+        if not items:
+            raise HTTPException(status_code=400, detail="Cart is empty")
 
         total_potions = 0
         total_gold = 0
