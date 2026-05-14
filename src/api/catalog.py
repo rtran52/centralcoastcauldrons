@@ -15,22 +15,11 @@ class CatalogItem(BaseModel):
     potion_type: List[int] = Field(..., min_length=4, max_length=4)
 
 
-# Smarter pricing based on potion type
-POTION_PRICES = {
-    "RED_POTION_0": 45,
-    "GREEN_POTION_0": 45,
-    "BLUE_POTION_0": 60,  # Blue costs more ml to make
-    "PURPLE_POTION_0": 65,  # Mixed potion premium
-}
-DEFAULT_PRICE = 50
-
-
 @router.get("/catalog/", tags=["catalog"], response_model=List[CatalogItem])
 def get_catalog() -> List[CatalogItem]:
     with db.engine.begin() as connection:
-        rows = connection.execute(
-            sqlalchemy.text(
-                """
+        rows = connection.execute(sqlalchemy.text(
+            """
             SELECT p.sku, p.name, p.price, p.red_ml, p.green_ml, p.blue_ml, p.dark_ml,
                    COALESCE(SUM(le.potion_change), 0) AS inventory
             FROM potions p
@@ -39,20 +28,16 @@ def get_catalog() -> List[CatalogItem]:
             HAVING COALESCE(SUM(le.potion_change), 0) > 0
             LIMIT 6
             """
-            )
-        ).fetchall()
+        )).fetchall()
 
     catalog = []
     for row in rows:
-        price = POTION_PRICES.get(row.sku, DEFAULT_PRICE)
-        catalog.append(
-            CatalogItem(
-                sku=row.sku,
-                name=row.name,
-                quantity=row.inventory,
-                price=price,
-                potion_type=[row.red_ml, row.green_ml, row.blue_ml, row.dark_ml],
-            )
-        )
+        catalog.append(CatalogItem(
+            sku=row.sku,
+            name=row.name,
+            quantity=row.inventory,
+            price=row.price,
+            potion_type=[row.red_ml, row.green_ml, row.blue_ml, row.dark_ml],
+        ))
 
     return catalog
